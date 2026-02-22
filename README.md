@@ -1,9 +1,11 @@
+# Installation
+
+Install this with `cargo install --path=.`
+
 # Usage
 
-`ranked-db-converter [jsonl dump path]`
+1. Download the dump from https://mcsr-downloads.mrderp.dev/
+1. Initalize a postgresql 18 database using `cat init.sql | psql db_name`
+1. Run the converter with `ranked-db-converter [jsonl dump path]`
 
 Default dump path: `dump.jsonl`
-
-# Database dump
-
-You can obtain a database dump from https://mcsr-downloads.mrderp.dev/
