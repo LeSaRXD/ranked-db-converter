@@ -43,6 +43,8 @@ async fn main() {
 		tasks.spawn(process_games(ch, Arc::clone(&db_pool)));
 	}
 	tasks.join_all().await;
+
+	post_convert(db_pool).await;
 }
 
 async fn connect_db() -> Arc<RwLock<PgPool>> {
@@ -108,16 +110,19 @@ async fn process_games(games: Vec<String>, pool: Arc<RwLock<PgPool>>) {
 	sqlx::query!(
 		r#"INSERT INTO game
 		(id, kind, season, date, winner_id, time, forfeited, decayed, replay_exists)
-		SELECT
-			UNNEST($1::BIGINT[]),
-			UNNEST($2::SMALLINT[]),
-			UNNEST($3::SMALLINT[]),
-			UNNEST($4::TIMESTAMP[]),
-			UNNEST($5::UUID[]),
-			UNNEST($6::BIGINT[]),
-			UNNEST($7::BOOLEAN[]),
-			UNNEST($8::BOOLEAN[]),
-			UNNEST($9::BOOLEAN[])
+		SELECT * FROM (
+			SELECT
+				UNNEST($1::BIGINT[]),
+				UNNEST($2::SMALLINT[]),
+				UNNEST($3::SMALLINT[]),
+				UNNEST($4::TIMESTAMP[]),
+				UNNEST($5::UUID[]) as winner_id,
+				UNNEST($6::BIGINT[]),
+				UNNEST($7::BOOLEAN[]),
+				UNNEST($8::BOOLEAN[]),
+				UNNEST($9::BOOLEAN[])
+			)
+		WHERE EXISTS(SELECT * FROM player WHERE id = winner_id)
 		ON CONFLICT (id)
 		DO UPDATE SET
 			kind = EXCLUDED.kind,
@@ -157,11 +162,14 @@ async fn process_games(games: Vec<String>, pool: Arc<RwLock<PgPool>>) {
 	sqlx::query!(
 		r#"INSERT INTO elo_change
 		(game_id, player_id, change, new_elo)
-		SELECT
-			UNNEST($1::BIGINT[]),
-			UNNEST($2::UUID[]),
-			UNNEST($3::SMALLINT[]),
-			UNNEST($4::SMALLINT[])
+		SELECT * FROM (
+			SELECT
+				UNNEST($1::BIGINT[]) as game_id,
+				UNNEST($2::UUID[]),
+				UNNEST($3::SMALLINT[]),
+				UNNEST($4::SMALLINT[])
+			)
+		WHERE EXISTS(SELECT * FROM game where id = game_id)
 		ON CONFLICT (game_id, player_id)
 		DO UPDATE SET
 		change = EXCLUDED.change"#,
@@ -177,4 +185,12 @@ async fn process_games(games: Vec<String>, pool: Arc<RwLock<PgPool>>) {
 
 fn convert_player(info: &UserProfile) -> (Uuid, &str) {
 	(info.uuid, &info.nickname)
+}
+
+async fn post_convert(pool: Arc<RwLock<PgPool>>) {
+	let pool = &*pool.write().await;
+	sqlx::query_file!("./update_elo.sql")
+		.execute(pool)
+		.await
+		.unwrap();
 }

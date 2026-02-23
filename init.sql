@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict 2aIxZ15NDu2r0VBubPq7e1vx5hp7b6CfOxTkFbaKmbp4M2HQgvJ2oewXfGxJs95
+\restrict rwqbVDsj5QT9FR2hYV6DoW6W7849AXyFQkDi3H5WK2zwvdvu9DFVb40m5mZxIGp
 
 -- Dumped from database version 18.2
 -- Dumped by pg_dump version 18.2
@@ -22,16 +22,6 @@ SET row_security = off;
 SET default_tablespace = '';
 
 SET default_table_access_method = heap;
-
---
--- Name: elo; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.elo (
-    player_id uuid,
-    latest_elo smallint
-);
-
 
 --
 -- Name: elo_change; Type: TABLE; Schema: public; Owner: -
@@ -68,7 +58,8 @@ CREATE TABLE public.game (
 
 CREATE TABLE public.player (
     id uuid NOT NULL,
-    username character varying(17) NOT NULL
+    username character varying(17) NOT NULL,
+    elo smallint
 );
 
 
@@ -101,7 +92,7 @@ ALTER TABLE ONLY public.player
 --
 
 ALTER TABLE ONLY public.elo_change
-    ADD CONSTRAINT elo_change_game_id_fkey FOREIGN KEY (game_id) REFERENCES public.game(id);
+    ADD CONSTRAINT elo_change_game_id_fkey FOREIGN KEY (game_id) REFERENCES public.game(id) ON UPDATE CASCADE ON DELETE CASCADE;
 
 
 --
@@ -109,15 +100,7 @@ ALTER TABLE ONLY public.elo_change
 --
 
 ALTER TABLE ONLY public.elo_change
-    ADD CONSTRAINT elo_change_player_id_fkey FOREIGN KEY (player_id) REFERENCES public.player(id);
-
-
---
--- Name: elo elo_player_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.elo
-    ADD CONSTRAINT elo_player_id_fkey FOREIGN KEY (player_id) REFERENCES public.player(id);
+    ADD CONSTRAINT elo_change_player_id_fkey FOREIGN KEY (player_id) REFERENCES public.player(id) ON UPDATE CASCADE ON DELETE CASCADE;
 
 
 --
@@ -125,12 +108,12 @@ ALTER TABLE ONLY public.elo
 --
 
 ALTER TABLE ONLY public.game
-    ADD CONSTRAINT game_winner_id_fkey FOREIGN KEY (winner_id) REFERENCES public.player(id);
+    ADD CONSTRAINT game_winner_id_fkey FOREIGN KEY (winner_id) REFERENCES public.player(id) ON UPDATE CASCADE ON DELETE CASCADE;
 
 
 --
 -- PostgreSQL database dump complete
 --
 
-\unrestrict 2aIxZ15NDu2r0VBubPq7e1vx5hp7b6CfOxTkFbaKmbp4M2HQgvJ2oewXfGxJs95
+\unrestrict rwqbVDsj5QT9FR2hYV6DoW6W7849AXyFQkDi3H5WK2zwvdvu9DFVb40m5mZxIGp
 
