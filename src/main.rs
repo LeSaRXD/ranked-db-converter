@@ -1,7 +1,9 @@
+#![forbid(clippy::unwrap_used)]
+
 use std::{
 	collections::HashSet,
 	fs::File,
-	io::{BufRead, BufReader},
+	io::{BufRead, BufReader, Lines},
 	sync::Arc,
 };
 
@@ -11,36 +13,51 @@ use sqlx::{PgPool, types::chrono::NaiveDateTime};
 use tokio::{sync::RwLock, task::JoinSet};
 use uuid::Uuid;
 
+// Tweak these to fit your hardware
+const CHUNK_SIZE: usize = 1024;
+const NUM_CHUNKS: usize = 16;
+
+fn read_chunk(lines: &mut Lines<BufReader<File>>) -> Vec<String> {
+	let mut chunk = Vec::with_capacity(CHUNK_SIZE);
+	for _ in 0..CHUNK_SIZE {
+		if let Some(l) = lines.next() {
+			match l {
+				Ok(line) => chunk.push(line),
+				Err(e) => eprintln!("Could not read line!\n{e}"),
+			}
+		}
+	}
+	chunk
+}
+
 #[tokio::main]
 async fn main() {
 	let path = std::env::args()
 		.nth(1)
 		.unwrap_or_else(|| "./dump.jsonl".to_owned());
-	let dump_file = BufReader::new(File::open(path).expect("File ./dump.jsonl does not exist"));
+	let err_msg = format!("File {} does not exist", path);
+	let dump_file = BufReader::new(File::open(path).expect(&err_msg));
 
 	let db_pool = connect_db().await;
 
 	let mut games = dump_file.lines();
 
-	const CHUNK_SIZE: usize = 1024;
-
-	let mut chunks = Vec::new();
-	while let Some(Ok(first)) = games.next() {
-		let mut chunk = Vec::with_capacity(CHUNK_SIZE);
-		chunk.push(first);
-		for _ in 1..CHUNK_SIZE {
-			if let Some(Ok(next)) = games.next() {
-				chunk.push(next);
-			} else {
-				break;
-			}
-		}
-		chunks.push(chunk);
-	}
+	let chunks: Vec<_> = (0..NUM_CHUNKS).map(|_| read_chunk(&mut games)).collect();
 
 	let mut tasks = JoinSet::new();
 	for ch in chunks {
 		tasks.spawn(process_games(ch, Arc::clone(&db_pool)));
+	}
+	while let Some(finished) = tasks.join_next().await {
+		if let Err(e) = finished {
+			eprintln!("Could not process chunk!\n{e:?}");
+		}
+		let chunk = read_chunk(&mut games);
+		if chunk.is_empty() {
+			break;
+		} else {
+			tasks.spawn(process_games(chunk, Arc::clone(&db_pool)));
+		}
 	}
 	tasks.join_all().await;
 
@@ -49,7 +66,11 @@ async fn main() {
 
 async fn connect_db() -> Arc<RwLock<PgPool>> {
 	let url = dotenvy::var("DATABASE_URL").expect("No DATABASE_URL in env");
-	Arc::new(RwLock::new(PgPool::connect(&url).await.unwrap()))
+	Arc::new(RwLock::new(
+		PgPool::connect(&url)
+			.await
+			.expect("Could not connect to the database"),
+	))
 }
 
 async fn process_games(games: Vec<String>, pool: Arc<RwLock<PgPool>>) {
@@ -81,7 +102,7 @@ async fn process_games(games: Vec<String>, pool: Arc<RwLock<PgPool>>) {
 	)
 	.execute(pool)
 	.await
-	.unwrap();
+	.expect("Could not write players to database");
 
 	let (ids, kinds, seasons, dates, winner_ids, times, forfeits, decays, replays): (
 		Vec<_>,
@@ -145,7 +166,7 @@ async fn process_games(games: Vec<String>, pool: Arc<RwLock<PgPool>>) {
 	)
 	.execute(pool)
 	.await
-	.unwrap();
+	.expect("Could not write games to database");
 
 	let (game_ids, player_ids, elo_changes, new_elos): (Vec<_>, Vec<_>, Vec<_>, Vec<_>) =
 		multiunzip(games.iter().flat_map(|g| {
@@ -161,7 +182,7 @@ async fn process_games(games: Vec<String>, pool: Arc<RwLock<PgPool>>) {
 
 	sqlx::query!(
 		r#"INSERT INTO elo_change
-		(game_id, player_id, change, new_elo)
+		(game_id, player_id, change, old_elo)
 		SELECT * FROM (
 			SELECT
 				UNNEST($1::BIGINT[]) as game_id,
@@ -180,7 +201,7 @@ async fn process_games(games: Vec<String>, pool: Arc<RwLock<PgPool>>) {
 	)
 	.execute(pool)
 	.await
-	.unwrap();
+	.expect("Could not write elo changes to database");
 }
 
 fn convert_player(info: &UserProfile) -> (Uuid, &str) {
@@ -192,5 +213,5 @@ async fn post_convert(pool: Arc<RwLock<PgPool>>) {
 	sqlx::query_file!("./update_elo.sql")
 		.execute(pool)
 		.await
-		.unwrap();
+		.expect("Could not update player elo");
 }

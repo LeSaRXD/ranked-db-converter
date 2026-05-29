@@ -31,7 +31,7 @@ CREATE TABLE public.elo_change (
     game_id bigint NOT NULL,
     player_id uuid NOT NULL,
     change smallint,
-    new_elo smallint
+    old_elo smallint
 );
 
 
@@ -58,7 +58,7 @@ CREATE TABLE public.game (
 
 CREATE TABLE public.player (
     id uuid NOT NULL,
-    username character varying(17) NOT NULL,
+    username character varying NOT NULL,
     elo smallint
 );
 

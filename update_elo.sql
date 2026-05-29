@@ -1,11 +1,11 @@
 WITH new AS (
 	SELECT DISTINCT ON (player_id)
 		player_id,
-		new_elo + change as elo,
+		old_elo + change as elo,
 		date
 	FROM elo_change, game
 	WHERE game_id = game.id
-	AND new_elo IS NOT NULL
+	AND old_elo IS NOT NULL
 	ORDER BY player_id, date desc
 )
 UPDATE player
