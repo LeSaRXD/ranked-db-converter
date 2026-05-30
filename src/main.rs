@@ -41,7 +41,7 @@ where
 async fn main() {
 	let cli = Cli::parse();
 	assert!(
-		cli.before > cli.after,
+		cli.before() > cli.after(),
 		"`before` cannot be less than or equal to `after`"
 	);
 
@@ -60,6 +60,8 @@ async fn main() {
 
 	let db_pool = connect_db().await;
 
+	let after = cli.after();
+	let before = cli.before();
 	let mut games = dump_file
 		.lines()
 		.flat_map(
@@ -75,8 +77,8 @@ async fn main() {
 				}
 			},
 		)
-		.skip_while(|m| m.info.id <= cli.after)
-		.take_while(|m| m.info.id < cli.before);
+		.skip_while(|m| m.info.id <= after)
+		.take_while(|m| m.info.id < before);
 
 	let chunks: Vec<_> = (0..NUM_CHUNKS).map(|_| read_chunk(&mut games)).collect();
 
