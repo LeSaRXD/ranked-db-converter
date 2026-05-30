@@ -45,12 +45,7 @@ async fn main() {
 		"`before` cannot be less than or equal to `after`"
 	);
 
-	const DEFAULT_PATH: &str = "./dump.jsonl";
-	let try_dump_file = match &cli.path {
-		Some(p) => File::open(p),
-		None => File::open(DEFAULT_PATH),
-	};
-	let dump_file = match try_dump_file {
+	let dump_file = match File::open(&cli.path) {
 		Ok(f) => BufReader::new(f),
 		Err(e) => {
 			eprintln!("Could not open dump file!\n{e:?}");

@@ -6,7 +6,8 @@ use std::path::PathBuf;
 #[command(version, about, long_about = None)]
 pub struct Cli {
 	/// Path to the dump file
-	pub path: Option<PathBuf>,
+	#[arg(default_value = "./dump.jsonl")]
+	pub path: PathBuf,
 
 	/// Only parse matches after the following match id
 	#[arg(short, long)]
