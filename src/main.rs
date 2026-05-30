@@ -1,56 +1,94 @@
-#![forbid(clippy::unwrap_used)]
+#![deny(clippy::unwrap_used)]
+
+mod cli;
 
 use std::{
 	collections::HashSet,
 	fs::File,
-	io::{BufRead, BufReader, Lines},
+	io::{BufRead, BufReader},
 	sync::Arc,
 };
 
+use clap::Parser;
 use itertools::multiunzip;
 use mcsr_ranked_api::{game::AdvancedMatchInfo, user::UserProfile};
 use sqlx::{PgPool, types::chrono::NaiveDateTime};
 use tokio::{sync::RwLock, task::JoinSet};
 use uuid::Uuid;
 
+use crate::cli::Cli;
+
 // Tweak these to fit your hardware
 const CHUNK_SIZE: usize = 1024;
 const NUM_CHUNKS: usize = 16;
 
-fn read_chunk(lines: &mut Lines<BufReader<File>>) -> Vec<String> {
+fn read_chunk<I>(lines: &mut I) -> Vec<AdvancedMatchInfo>
+where
+	I: Iterator<Item = AdvancedMatchInfo>,
+{
 	let mut chunk = Vec::with_capacity(CHUNK_SIZE);
-	for _ in 0..CHUNK_SIZE {
-		if let Some(l) = lines.next() {
-			match l {
-				Ok(line) => chunk.push(line),
-				Err(e) => eprintln!("Could not read line!\n{e}"),
-			}
-		}
+	let mut count = CHUNK_SIZE;
+	while let Some(info) = lines.next()
+		&& count > 0
+	{
+		chunk.push(info);
+		count -= 1;
 	}
 	chunk
 }
 
 #[tokio::main]
 async fn main() {
-	let path = std::env::args()
-		.nth(1)
-		.unwrap_or_else(|| "./dump.jsonl".to_owned());
-	let err_msg = format!("File {} does not exist", path);
-	let dump_file = BufReader::new(File::open(path).expect(&err_msg));
+	let cli = Cli::parse();
+	assert!(
+		cli.before > cli.after,
+		"`before` cannot be less than or equal to `after`"
+	);
+
+	const DEFAULT_PATH: &str = "./dump.jsonl";
+	let try_dump_file = match &cli.path {
+		Some(p) => File::open(p),
+		None => File::open(DEFAULT_PATH),
+	};
+	let dump_file = match try_dump_file {
+		Ok(f) => BufReader::new(f),
+		Err(e) => {
+			eprintln!("Could not open dump file!\n{e:?}");
+			return;
+		}
+	};
 
 	let db_pool = connect_db().await;
 
-	let mut games = dump_file.lines();
+	let mut games = dump_file
+		.lines()
+		.flat_map(
+			|res| match res.map(|l| serde_json::from_str::<AdvancedMatchInfo>(&l)) {
+				Ok(Ok(t)) => Some(t),
+				Ok(Err(e)) => {
+					eprintln!("Could not read line\n{e:?}");
+					None
+				}
+				Err(e) => {
+					eprintln!("Could not convert line to MatchInfo\n{e:?}");
+					None
+				}
+			},
+		)
+		.skip_while(|m| m.info.id <= cli.after)
+		.take_while(|m| m.info.id < cli.before);
 
 	let chunks: Vec<_> = (0..NUM_CHUNKS).map(|_| read_chunk(&mut games)).collect();
 
+	let mut inserted_games = 0;
 	let mut tasks = JoinSet::new();
 	for ch in chunks {
 		tasks.spawn(process_games(ch, Arc::clone(&db_pool)));
 	}
 	while let Some(finished) = tasks.join_next().await {
-		if let Err(e) = finished {
-			eprintln!("Could not process chunk!\n{e:?}");
+		match finished {
+			Ok(inserted) => inserted_games += inserted,
+			Err(e) => eprintln!("Could not process chunk!\n{e:?}"),
 		}
 		let chunk = read_chunk(&mut games);
 		if chunk.is_empty() {
@@ -59,7 +97,9 @@ async fn main() {
 			tasks.spawn(process_games(chunk, Arc::clone(&db_pool)));
 		}
 	}
-	tasks.join_all().await;
+	inserted_games += tasks.join_all().await.iter().sum::<usize>();
+
+	println!("Successfully inserted {inserted_games} matches into the database!");
 
 	post_convert(db_pool).await;
 }
@@ -73,11 +113,7 @@ async fn connect_db() -> Arc<RwLock<PgPool>> {
 	))
 }
 
-async fn process_games(games: Vec<String>, pool: Arc<RwLock<PgPool>>) {
-	let games: Vec<AdvancedMatchInfo> = games
-		.into_iter()
-		.flat_map(|g| serde_json::from_str(&g).ok())
-		.collect();
+async fn process_games(games: Vec<AdvancedMatchInfo>, pool: Arc<RwLock<PgPool>>) -> usize {
 	let players: HashSet<_> = games
 		.iter()
 		.flat_map(|g| {
@@ -202,6 +238,8 @@ async fn process_games(games: Vec<String>, pool: Arc<RwLock<PgPool>>) {
 	.execute(pool)
 	.await
 	.expect("Could not write elo changes to database");
+
+	games.len()
 }
 
 fn convert_player(info: &UserProfile) -> (Uuid, &str) {
